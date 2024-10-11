@@ -1,0 +1,80 @@
+# csv 파일에서 몇개만 랜덤으로 골라 샘플링 하고 싶은데 그럴 경우 대용량의 csv 파일을 한줄씩 읽어오느라 굉장한 시간 소모 발생 
+# >>> 메모리 접근방식으로 최적화  ,   랜덤으로 뽑을 csv 파일이 램 용량에 비해 비대할 때 추천하는 방법 
+
+
+
+import os
+import random
+import pandas as pd
+import io
+
+# 폴더 경로
+folder_path = 'labels'
+
+# 폴더 내 모든 CSV 파일 목록 가져오기
+csv_files = [os.path.join(folder_path, file) for file in os.listdir(folder_path) if file.endswith('.csv')]
+
+# 전체 DataFrame을 추가할 리스트 생성
+final_df_list = []
+
+# 각 파일에 대해 작업 수행
+for file_path in csv_files:
+    print(f"Processing {file_path}")
+
+    # 파일 크기 (바이트 단위)
+    file_size = os.path.getsize(file_path)
+
+    # 첫 50,000줄 읽어서 평균 행 길이를 계산
+    with open(file_path, 'r') as file:
+        lines = [next(file) for _ in range(50000)]
+        avg_line_length = sum(len(line) for line in lines) / len(lines)
+
+    # 파일 크기와 평균 행 길이로 총 행 수를 추정한 후, 9/10으로 조정
+    estimated_rows = int((file_size // avg_line_length) * 0.9)
+    print(f"Estimated total number of rows in {file_path}: {estimated_rows}")
+
+    # 짝수 인덱스를 제외한 홀수 인덱스만 추출
+    valid_indices = [i for i in range(estimated_rows) if i % 2 == 0]
+
+    # 랜덤으로 n개의 인덱스를 골라 (예: 40,000개)
+    n = 40000
+    random_indices = sorted(random.sample(valid_indices, n))
+    
+    # 선택한 인덱스만 빠르게 읽기 위해 주솟값 기반으로 접근
+    df_list = []  # DataFrame을 추가할 리스트 생성
+
+    with open(file_path, 'r') as file:
+        for idx in random_indices:
+            # 랜덤으로 선택된 인덱스의 대략적인 파일 위치를 계산
+            byte_position = int(idx * avg_line_length)
+
+            # 파일 포인터를 해당 위치로 이동
+            file.seek(byte_position)
+
+            # 현재 위치가 행 중간일 수 있으므로, 줄바꿈 문자를 찾음
+            file.readline()  # 현재 행의 중간 부분을 무시하고 줄바꿈 문자까지 이동
+
+            # 그다음 줄(완전한 행)을 읽음
+            line = file.readline().strip()  # 다음 행 전체를 읽어 옴
+
+            # 빈 줄인 경우 다음 줄을 읽음
+            while not line:
+                line = file.readline().strip()  # 빈 줄이 아닌 경우까지 반복
+
+            if line:  # 유효한 줄인 경우에만 처리
+                df_list.append(pd.read_csv(io.StringIO(line), header=None))
+
+    # DataFrame 리스트를 concat으로 합침
+    if df_list:
+        df = pd.concat(df_list, ignore_index=True)
+        final_df_list.append(df)  # 최종 리스트에 추가
+    else:
+        print(f"No valid data found in {file_path}")
+
+# 모든 파일의 데이터를 병합
+if final_df_list:
+    final_df = pd.concat(final_df_list, ignore_index=True)
+    print("All CSV files merged successfully!")
+    print(final_df)
+else:
+    print("No valid data found in any of the CSV files.")
